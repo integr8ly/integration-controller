@@ -9,7 +9,7 @@ Things it can currently integrate
 # Status
 POC
 
-# Test it locally
+# Run it locally
 
 *Note*: You will need a running Kubernetes or OpenShift cluster to use the Operator
 

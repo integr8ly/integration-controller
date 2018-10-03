@@ -63,7 +63,7 @@ Initially this is likely to be a configmap. Below is an initial draft for how th
 ```json 
 {
    "connectionType": "amqp",
-   "url": "amqp://messaging.enmasse-eval.svc:5672?amqp.saslMechanisms=PLAIN"
+   "url": "amqp://messaging.enmasse-eval.svc:5672?amqp.saslMechanisms=PLAIN",
    "credentials":{
         "user":"",
         "pass":""

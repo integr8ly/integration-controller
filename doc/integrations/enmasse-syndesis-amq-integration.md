@@ -38,6 +38,8 @@ Requires upstream changes to land first.
 
 https://github.com/syndesisio/syndesis/issues/3692
 
+New version of EnMasse (0.23.0) https://github.com/EnMasseProject/enmasse/releases/tag/0.23.0
+
 ### Creating the integration
 - The integration controller watches for address-space resources in its own namespace (created via the EnMasse API Server). 
 - When it sees one, it looks for a Syndesis resource in its namespace

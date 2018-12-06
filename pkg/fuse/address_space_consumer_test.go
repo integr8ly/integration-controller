@@ -18,19 +18,19 @@ import (
 	kerr "k8s.io/apimachinery/pkg/api/errors"
 )
 
-func TestConsumer_Exists(t *testing.T) {
+func TestAddressSpaceConsumer_Exists(t *testing.T) {
 	cases := []struct {
 		Name        string
 		WatchNS     string
 		ShouldExist bool
-		Cruder      func() FuseCrudler
-		Validate    func(t *testing.T, mock *FuseCrudlerMock)
+		Cruder      func() Crudler
+		Validate    func(t *testing.T, mock *CrudlerMock)
 	}{{
 		Name:        "test exists returns true when a fuse exists",
 		WatchNS:     "test",
 		ShouldExist: true,
-		Cruder: func() FuseCrudler {
-			return &FuseCrudlerMock{
+		Cruder: func() Crudler {
+			return &CrudlerMock{
 				ListFunc: func(namespace string, o sdk.Object, option ...sdk.ListOption) error {
 					slist := o.(*v1alpha1.SyndesisList)
 					slist.Items = []v1alpha1.Syndesis{
@@ -40,7 +40,7 @@ func TestConsumer_Exists(t *testing.T) {
 				},
 			}
 		},
-		Validate: func(t *testing.T, mock *FuseCrudlerMock) {
+		Validate: func(t *testing.T, mock *CrudlerMock) {
 			if len(mock.ListCalls()) != 1 {
 				t.Fatal("failed should have called list at least once")
 			}
@@ -50,14 +50,14 @@ func TestConsumer_Exists(t *testing.T) {
 			Name:        "test exists returns false when a fuse is missing",
 			WatchNS:     "test",
 			ShouldExist: false,
-			Cruder: func() FuseCrudler {
-				return &FuseCrudlerMock{
+			Cruder: func() Crudler {
+				return &CrudlerMock{
 					ListFunc: func(namespace string, o sdk.Object, option ...sdk.ListOption) error {
 						return nil
 					},
 				}
 			},
-			Validate: func(t *testing.T, mock *FuseCrudlerMock) {
+			Validate: func(t *testing.T, mock *CrudlerMock) {
 				if len(mock.ListCalls()) != 1 {
 					t.Fatal("failed should have called list at least once")
 				}
@@ -67,14 +67,14 @@ func TestConsumer_Exists(t *testing.T) {
 			Name:        "test exists returns false when err reading fuse",
 			WatchNS:     "test",
 			ShouldExist: false,
-			Cruder: func() FuseCrudler {
-				return &FuseCrudlerMock{
+			Cruder: func() Crudler {
+				return &CrudlerMock{
 					ListFunc: func(namespace string, o sdk.Object, option ...sdk.ListOption) error {
 						return errors.New("some error ")
 					},
 				}
 			},
-			Validate: func(t *testing.T, mock *FuseCrudlerMock) {
+			Validate: func(t *testing.T, mock *CrudlerMock) {
 				if len(mock.ListCalls()) != 1 {
 					t.Fatal("failed should have called list at least once")
 				}
@@ -85,20 +85,20 @@ func TestConsumer_Exists(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			mockCrud := tc.Cruder()
-			consumer := NewConsumer(tc.WatchNS, mockCrud)
+			consumer := NewAddressSpaceConsumer(tc.WatchNS, mockCrud)
 			exists := consumer.Exists()
 			if exists != tc.ShouldExist {
 				t.Fatal("expected fuse to exists")
 			}
 			if tc.Validate != nil {
-				tc.Validate(t, mockCrud.(*FuseCrudlerMock))
+				tc.Validate(t, mockCrud.(*CrudlerMock))
 			}
 
 		})
 	}
 }
 
-func TestConsumer_Validate(t *testing.T) {
+func TestAddressSpaceConsumer_Validate(t *testing.T) {
 	cases := []struct {
 		Name        string
 		WatchNS     string
@@ -123,7 +123,7 @@ func TestConsumer_Validate(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			consumer := NewConsumer(tc.WatchNS, nil)
+			consumer := NewAddressSpaceConsumer(tc.WatchNS, nil)
 			err := consumer.Validate(tc.Address)
 			if tc.ExpectError && err == nil {
 				t.Fatal("expected an error but got none")
@@ -136,25 +136,25 @@ func TestConsumer_Validate(t *testing.T) {
 	}
 }
 
-func TestConsumer_CreateAvailableIntegration(t *testing.T) {
+func TestAddressSpaceConsumer_CreateAvailableIntegration(t *testing.T) {
 	cases := []struct {
 		Name        string
 		WatchNS     string
-		Cruder      func() FuseCrudler
+		Cruder      func() Crudler
 		Address     *v1.AddressSpace
 		Enabled     bool
 		ExpectError bool
-		Validate    func(t *testing.T, mock *FuseCrudlerMock)
+		Validate    func(t *testing.T, mock *CrudlerMock)
 	}{
 		{
 			Name:    "test create available integration from address-space successful",
 			WatchNS: "test",
-			Cruder: func() FuseCrudler {
-				return &FuseCrudlerMock{
+			Cruder: func() Crudler {
+				return &CrudlerMock{
 					ListFunc: func(namespace string, o sdk.Object, option ...sdk.ListOption) error {
 						slist := o.(*v1alpha1.SyndesisList)
 						slist.Items = []v1alpha1.Syndesis{
-							syndesis("me"),
+							createSyndesis("me"),
 						}
 						return nil
 					},
@@ -171,7 +171,7 @@ func TestConsumer_CreateAvailableIntegration(t *testing.T) {
 			},
 			Address: validAddressSpace(),
 			Enabled: true,
-			Validate: func(t *testing.T, mock *FuseCrudlerMock) {
+			Validate: func(t *testing.T, mock *CrudlerMock) {
 				if len(mock.CreateCalls()) != 1 {
 					t.Fatal("expected create to be called once but was called ", len(mock.CreateCalls()))
 				}
@@ -180,12 +180,12 @@ func TestConsumer_CreateAvailableIntegration(t *testing.T) {
 		{
 			Name:    "test create available integration from address-space fails",
 			WatchNS: "test",
-			Cruder: func() FuseCrudler {
-				return &FuseCrudlerMock{
+			Cruder: func() Crudler {
+				return &CrudlerMock{
 					ListFunc: func(namespace string, o sdk.Object, option ...sdk.ListOption) error {
 						slist := o.(*v1alpha1.SyndesisList)
 						slist.Items = []v1alpha1.Syndesis{
-							syndesis("notme"),
+							createSyndesis("notme"),
 						}
 						return nil
 					},
@@ -202,7 +202,7 @@ func TestConsumer_CreateAvailableIntegration(t *testing.T) {
 			},
 			Address: validAddressSpace(),
 			Enabled: true,
-			Validate: func(t *testing.T, mock *FuseCrudlerMock) {
+			Validate: func(t *testing.T, mock *CrudlerMock) {
 				if len(mock.CreateCalls()) != 0 {
 					t.Fatal("expected create not to to be called was called ", len(mock.CreateCalls()))
 				}
@@ -213,8 +213,8 @@ func TestConsumer_CreateAvailableIntegration(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			mockCrud := tc.Cruder()
-			consumer := NewConsumer(tc.WatchNS, mockCrud)
-			err := consumer.CreateAvailableIntegration(tc.Address, tc.WatchNS, tc.Enabled)
+			consumer := NewAddressSpaceConsumer(tc.WatchNS, mockCrud)
+			err := consumer.CreateAvailableIntegration(tc.Address, tc.Enabled)
 			if tc.ExpectError && err == nil {
 				t.Fatal("expected an error but got none")
 			}
@@ -222,7 +222,7 @@ func TestConsumer_CreateAvailableIntegration(t *testing.T) {
 				t.Fatal("did not expect error but got one ", err)
 			}
 			if tc.Validate != nil {
-				tc.Validate(t, mockCrud.(*FuseCrudlerMock))
+				tc.Validate(t, mockCrud.(*CrudlerMock))
 			}
 
 		})
@@ -230,19 +230,19 @@ func TestConsumer_CreateAvailableIntegration(t *testing.T) {
 
 }
 
-func TestConsumer_RemoveAvailableIntegration(t *testing.T) {
+func TestAddressSpaceConsumer_RemoveAvailableIntegration(t *testing.T) {
 	cases := []struct {
 		Name        string
 		WatchNS     string
-		Cruder      func() FuseCrudler
+		Cruder      func() Crudler
 		Address     *v1.AddressSpace
 		ExpectError bool
-		Validate    func(t *testing.T, mock *FuseCrudlerMock)
+		Validate    func(t *testing.T, mock *CrudlerMock)
 	}{
 		{
 			Name: "test removing integration successful",
-			Cruder: func() FuseCrudler {
-				return &FuseCrudlerMock{
+			Cruder: func() Crudler {
+				return &CrudlerMock{
 					GetFunc: func(into sdk.Object, opts ...sdk.GetOption) error {
 						return nil
 					},
@@ -253,7 +253,7 @@ func TestConsumer_RemoveAvailableIntegration(t *testing.T) {
 				}
 			},
 			Address: validAddressSpace(),
-			Validate: func(t *testing.T, mock *FuseCrudlerMock) {
+			Validate: func(t *testing.T, mock *CrudlerMock) {
 				if len(mock.GetCalls()) != 1 {
 					t.Fatal("expected get to be called once but was called ", len(mock.GetCalls()))
 				}
@@ -264,8 +264,8 @@ func TestConsumer_RemoveAvailableIntegration(t *testing.T) {
 		},
 		{
 			Name: "test removing integration fails when integration not found",
-			Cruder: func() FuseCrudler {
-				return &FuseCrudlerMock{
+			Cruder: func() Crudler {
+				return &CrudlerMock{
 					GetFunc: func(into sdk.Object, opts ...sdk.GetOption) error {
 						return kerr.NewNotFound(schema.GroupResource{Group: "integreatly.org", Resource: "integration"}, "")
 					},
@@ -275,7 +275,7 @@ func TestConsumer_RemoveAvailableIntegration(t *testing.T) {
 					},
 				}
 			},
-			Validate: func(t *testing.T, mock *FuseCrudlerMock) {
+			Validate: func(t *testing.T, mock *CrudlerMock) {
 				if len(mock.GetCalls()) != 1 {
 					t.Fatal("expected get to be called once but was called ", len(mock.GetCalls()))
 				}
@@ -290,8 +290,8 @@ func TestConsumer_RemoveAvailableIntegration(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			cruder := tc.Cruder()
-			consumer := NewConsumer(tc.WatchNS, cruder)
-			err := consumer.RemoveAvailableIntegration(tc.Address, tc.WatchNS)
+			consumer := NewAddressSpaceConsumer(tc.WatchNS, cruder)
+			err := consumer.RemoveAvailableIntegration(tc.Address)
 			if tc.ExpectError && err == nil {
 				t.Fatal("expected an error but got none")
 			}
@@ -299,7 +299,7 @@ func TestConsumer_RemoveAvailableIntegration(t *testing.T) {
 				t.Fatal("did not expect an error but got one ", err)
 			}
 			if tc.Validate != nil {
-				tc.Validate(t, cruder.(*FuseCrudlerMock))
+				tc.Validate(t, cruder.(*CrudlerMock))
 			}
 		})
 	}
@@ -324,6 +324,6 @@ func validAddressSpace() *v1.AddressSpace {
 	}
 }
 
-func syndesis(createdBy string) v1alpha1.Syndesis {
+func createSyndesis(createdBy string) v1alpha1.Syndesis {
 	return v1alpha1.Syndesis{ObjectMeta: v12.ObjectMeta{Annotations: map[string]string{"syndesis.io/created-by": createdBy}}}
 }

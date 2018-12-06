@@ -77,7 +77,7 @@ func (s *Service) DeleteUser(userName, realm string) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to delete user from keycloak")
 	}
-	defer transport.ResponseCloser(resp)
+	defer transport.ResponseCloser(resp.Body)
 	if resp.StatusCode != http.StatusNoContent {
 		return errors.New("unexpected response code from keycloak " + resp.Status)
 	}
@@ -87,17 +87,17 @@ func (s *Service) DeleteUser(userName, realm string) error {
 	return nil
 }
 
-func (s *Service) CreateUser(userName, realm string) (*v1alpha1.User, error) {
+func (s *Service) CreateUser(userName, realm string) (*v1alpha1.User, *v1.Secret, error) {
 	// note in the next release of enmasse we will be able to replace this with a crd creation
 	route, err := s.routeClient.Routes(s.enmasseNS).Get("keycloak", metav1.GetOptions{})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list routes for enmasse")
+		return nil, nil, errors.Wrap(err, "failed to list routes for enmasse")
 	}
 	logrus.Info("found route for keycloak ", route.Name)
 	// find secret for keycloak
 	cred, err := s.k8sclient.CoreV1().Secrets(s.enmasseNS).Get("keycloak-credentials", metav1.GetOptions{})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get keycloak credentials for enmasse")
+		return nil, nil, errors.Wrap(err, "failed to get keycloak credentials for enmasse")
 	}
 	pass := string(cred.Data["admin.password"])
 	user := string(cred.Data["admin.username"])
@@ -105,7 +105,7 @@ func (s *Service) CreateUser(userName, realm string) (*v1alpha1.User, error) {
 
 	authToken, err := s.keycloakLogin("https://"+route.Spec.Host, string(user), string(pass))
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to login to enmasse keycloak")
+		return nil, nil, errors.Wrap(err, "failed to login to enmasse keycloak")
 	}
 	userPass := uuid.New()
 	u, err := s.createUser(host, authToken, realm, userName, userPass)
@@ -114,12 +114,12 @@ func (s *Service) CreateUser(userName, realm string) (*v1alpha1.User, error) {
 		logrus.Debug("enmasse keycloak user already exists reading credentials from secret")
 		us, err := s.k8sclient.CoreV1().Secrets(s.currentNS).Get(secretName, metav1.GetOptions{})
 		if err != nil {
-
+			return nil, nil, err
 		}
-		return &v1alpha1.User{Password: us.StringData["pass"], UserName: us.StringData["user"]}, nil
+		return &v1alpha1.User{Password: us.StringData["pass"], UserName: us.StringData["user"]}, us, nil
 	}
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create new user for enmasse")
+		return nil, nil, errors.Wrap(err, "failed to create new user for enmasse")
 	}
 	// add a secret with this users details
 	us := &v1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName},
@@ -127,7 +127,7 @@ func (s *Service) CreateUser(userName, realm string) (*v1alpha1.User, error) {
 	if _, err := s.k8sclient.CoreV1().Secrets(s.currentNS).Create(us); err != nil {
 		logrus.Error("failed to store user credentials in a secret ", err)
 	}
-	return u, nil
+	return u, us, nil
 }
 
 func (s *Service) keycloakLogin(host, user, pass string) (string, error) {
@@ -152,7 +152,7 @@ func (s *Service) keycloakLogin(host, user, pass string) (string, error) {
 		logrus.Errorf("error on request %+v", err)
 		return "", errors.Wrap(err, "error performing token request")
 	}
-	defer transport.ResponseCloser(res)
+	defer transport.ResponseCloser(res.Body)
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		logrus.Errorf("error reading response %+v", err)
@@ -192,7 +192,7 @@ func (s *Service) getGroups(host, token, realm string) ([]*group, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer transport.ResponseCloser(res)
+	defer transport.ResponseCloser(res.Body)
 	if res.StatusCode != http.StatusOK {
 		return nil, errors.New("unexpected response code from listing groups " + res.Status)
 
@@ -222,7 +222,7 @@ func (s *Service) getUserID(host, token, realm, userName string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	defer transport.ResponseCloser(res)
+	defer transport.ResponseCloser(res.Body)
 	if res.StatusCode != http.StatusOK {
 		return "", errors.New("unexpected response code from listing groups " + res.Status)
 
@@ -263,7 +263,7 @@ func (s *Service) addUserToGroups(host, token, realm, userID string, groups []st
 				errs = errs + " " + err.Error()
 				return
 			}
-			defer transport.ResponseCloser(res)
+			defer transport.ResponseCloser(res.Body)
 			if res.StatusCode != http.StatusNoContent {
 				errs = errs + " unexpected response code adding group for user" + res.Status
 			}
@@ -312,7 +312,7 @@ func (s *Service) createUser(host, token, realm, userName, password string) (*v1
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to make request to create new enmasse user")
 	}
-	defer transport.ResponseCloser(res)
+	defer transport.ResponseCloser(res.Body)
 	if res.StatusCode == http.StatusConflict {
 		logrus.Info("user already exists doing nothing")
 		return nil, &errors2.AlreadyExistsErr{}

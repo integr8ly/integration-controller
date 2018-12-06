@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	syndesis "github.com/integr8ly/integration-controller/pkg/apis/syndesis/v1alpha1"
+
+	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -20,16 +24,21 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-type Consumer struct {
-	watchNS    string
-	fuseCruder FuseCrudler
+type AddressSpaceConsumer struct {
+	*FuseExistsChecker
+	watchNS           string
+	integrationCruder Crudler
 }
 
-func NewConsumer(watchNS string, fuseCruder FuseCrudler) *Consumer {
-	return &Consumer{watchNS: watchNS, fuseCruder: fuseCruder}
+func NewAddressSpaceConsumer(watchNS string, cruder Crudler) *AddressSpaceConsumer {
+	return &AddressSpaceConsumer{
+		watchNS:           watchNS,
+		integrationCruder: cruder,
+		FuseExistsChecker: NewFuseExistsChecker(watchNS, cruder),
+	}
 }
 
-func (c *Consumer) GVKs() []schema.GroupVersionKind {
+func (c *AddressSpaceConsumer) GVKs() []schema.GroupVersionKind {
 	return []schema.GroupVersionKind{{
 		Kind:    enmasse.AddressSpaceKind,
 		Group:   enmasse.GroupName,
@@ -41,18 +50,7 @@ func (c *Consumer) GVKs() []schema.GroupVersionKind {
 	}}
 }
 
-func (c *Consumer) Exists() bool {
-	logrus.Debug("fuse consume: checking if a fuse exists")
-	syndesisList := v1alpha12.NewSyndesisList()
-	if err := c.fuseCruder.List(c.watchNS, syndesisList); err != nil {
-		logrus.Error("fuse consumer: failed to check if fuse exists. Will try again ", err)
-		return false
-	}
-
-	return len(syndesisList.Items) > 0
-}
-
-func (c *Consumer) Validate(object runtime.Object) error {
+func (c *AddressSpaceConsumer) Validate(object runtime.Object) error {
 	// validate that we have the annotations
 	switch o := object.(type) {
 	case *enmasse.AddressSpace:
@@ -71,7 +69,7 @@ func unMarshalAddressSpace(cfgm *v1.ConfigMap) (*enmasse.AddressSpace, error) {
 	return &addressSpace, err
 }
 
-func (c *Consumer) convertToAddressSpace(o runtime.Object) (*enmasse.AddressSpace, error) {
+func (c *AddressSpaceConsumer) convertToAddressSpace(o runtime.Object) (*enmasse.AddressSpace, error) {
 	switch ro := o.(type) {
 	case *v1.ConfigMap:
 		return unMarshalAddressSpace(ro)
@@ -83,7 +81,7 @@ func (c *Consumer) convertToAddressSpace(o runtime.Object) (*enmasse.AddressSpac
 	}
 }
 
-func (c *Consumer) CreateAvailableIntegration(o runtime.Object, namespace string, enabled bool) error {
+func (c *AddressSpaceConsumer) CreateAvailableIntegration(o runtime.Object, enabled bool) error {
 	logrus.Info("create available integration for fuses")
 
 	as, err := c.convertToAddressSpace(o)
@@ -91,7 +89,7 @@ func (c *Consumer) CreateAvailableIntegration(o runtime.Object, namespace string
 		return err
 	}
 	syndesisList := v1alpha12.NewSyndesisList()
-	if err := c.fuseCruder.List(c.watchNS, syndesisList); err != nil {
+	if err := c.integrationCruder.List(c.watchNS, syndesisList); err != nil {
 		logrus.Error("fuse consumer: failed to check if fuse exists ", err)
 		return nil
 	}
@@ -107,10 +105,11 @@ func (c *Consumer) CreateAvailableIntegration(o runtime.Object, namespace string
 		}
 		for _, endPointStatus := range as.Status.EndPointStatuses {
 			if endPointStatus.Name == "messaging" {
-				ingrtn := v1alpha1.NewIntegration()
-				ingrtn.ObjectMeta.Name = c.integrationName(as)
-				ingrtn.ObjectMeta.Namespace = namespace
+				ingrtn := v1alpha1.NewIntegration(c.integrationName(as))
+				ingrtn.ObjectMeta.Namespace = c.watchNS
 				ingrtn.Spec.Client = s.Name
+				objectMeta := o.(v12.ObjectMetaAccessor).GetObjectMeta()
+				ingrtn.Status.DiscoveryResource = v1alpha1.DiscoveryResource{Namespace: objectMeta.GetNamespace(), Name: objectMeta.GetName(), GroupVersionKind: o.GetObjectKind().GroupVersionKind()}
 				ingrtn.Status.IntegrationMetaData = map[string]string{}
 				ingrtn.Status.IntegrationMetaData[msgHostKey] = endPointStatus.ServiceHost + ":" + fmt.Sprintf("%d", endPointStatus.Port)
 				ingrtn.Status.IntegrationMetaData[realmKey] = as.Annotations["enmasse.io/realm-name"]
@@ -124,7 +123,7 @@ func (c *Consumer) CreateAvailableIntegration(o runtime.Object, namespace string
 					}
 				}
 
-				if err := c.fuseCruder.Create(ingrtn); err != nil && !errors.IsAlreadyExists(err) {
+				if err := c.integrationCruder.Create(ingrtn); err != nil && !errors.IsAlreadyExists(err) {
 					if errs == nil {
 						errs = err
 						continue
@@ -138,7 +137,7 @@ func (c *Consumer) CreateAvailableIntegration(o runtime.Object, namespace string
 	return errs
 }
 
-func (c *Consumer) RemoveAvailableIntegration(o runtime.Object, namespace string) error {
+func (c *AddressSpaceConsumer) RemoveAvailableIntegration(o runtime.Object) error {
 	logrus.Info("delete available integration called for fuse")
 	// get an integration with that name
 	as, err := c.convertToAddressSpace(o)
@@ -146,26 +145,38 @@ func (c *Consumer) RemoveAvailableIntegration(o runtime.Object, namespace string
 		return err
 	}
 	name := c.integrationName(as)
-	ingrtn := v1alpha1.NewIntegration()
+	ingrtn := v1alpha1.NewIntegration(name)
 	ingrtn.ObjectMeta.Name = name
-	ingrtn.ObjectMeta.Namespace = namespace
-	if err := c.fuseCruder.Get(ingrtn); err != nil {
+	ingrtn.ObjectMeta.Namespace = c.watchNS
+	if err := c.integrationCruder.Get(ingrtn); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
 		return err
 	}
-	return c.fuseCruder.Delete(ingrtn)
+	return c.integrationCruder.Delete(ingrtn)
 }
 
-func (c *Consumer) integrationName(o *enmasse.AddressSpace) string {
+func (c *AddressSpaceConsumer) integrationName(o *enmasse.AddressSpace) string {
 	return "enmasse-" + o.Name + "-to-fuse"
 }
 
-//go:generate moq -out fuse_crudler_test.go . FuseCrudler
-type FuseCrudler interface {
+//go:generate moq -out crudler_mock_test.go . Crudler
+type Crudler interface {
 	List(namespace string, o sdk.Object, option ...sdk.ListOption) error
 	Get(into sdk.Object, opts ...sdk.GetOption) error
 	Create(object sdk.Object) (err error)
 	Delete(object sdk.Object) error
+	Update(object sdk.Object) error
+}
+
+//go:generate moq -out fuse_client_test.go . FuseClient
+type FuseClient interface {
+	// TODO perhaps should take a cutomisation object
+	CreateCustomisation(c *syndesis.Connection) (*syndesis.Connection, error)
+	DeleteConnector(c *syndesis.Connection) error
+	ConnectionExists(c *syndesis.Connection) (bool, error)
+	CreateConnection(c *syndesis.Connection) (*syndesis.Connection, error)
+	UpdateConnection(c *syndesis.Connection) (*syndesis.Connection, error)
+	DeleteConnection(c *syndesis.Connection) error
 }
